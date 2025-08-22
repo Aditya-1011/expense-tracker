@@ -1,8 +1,9 @@
-import React, { createContext, useContext, useState, ReactNode } from "react";
+// client/src/context/financial-record-context.tsx
+import React, { createContext, useContext, useState, type ReactNode } from "react";
 
 interface FinancialRecord {
   userId: string;
-  date: Date;
+  date: Date | string;
   desc: string;
   amt: number;
   category: string;
@@ -22,7 +23,8 @@ export const FinancialRecordProvider: React.FC<{ children: ReactNode }> = ({ chi
     try {
       console.log("New Expense:", record);
 
-      const response = await fetch("http://localhost:3001/api/financial-records", {
+      // URL matches the server route that's currently running in your build folder.
+      const response = await fetch("http://localhost:3001/financial-record", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

@@ -2,18 +2,20 @@ import express, { Express } from "express";
 import mongoose from "mongoose";
 import financialrecordrouter from "./Routes/financial-routes.js";
 import cors from "cors";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 const app: Express = express();
 const PORT = process.env.PORT || 3001;
 
 app.use(express.json());
-app.use(cors({ origin: "http://localhost:5173" }));
+app.use(cors());
 
 // ✅ FIX: match frontend endpoint
-app.use("/api/financial-records", financialrecordrouter);
+app.use("api/financial-records", financialrecordrouter);
 
-const mongodb: string =
-  "mongodb+srv://aditya:aditya@expense-tracker.6smzqvm.mongodb.net/?retryWrites=true&w=majority&appName=expense-tracker";
+const mongodb: string = process.env.MONGODB_URI as string;
 
 // connect to MongoDB
 mongoose
