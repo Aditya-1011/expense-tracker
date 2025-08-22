@@ -1,0 +1,9 @@
+# dependencies
+node_modules/
+
+# environment variables
+.env
+
+# lock files (optional if you only want yarn.lock or package-lock.json)
+package-lock.json
+yarn.lock
