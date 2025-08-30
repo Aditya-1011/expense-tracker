@@ -1,173 +1,143 @@
 // client/src/context/financial-record-context.tsx
-import React, {
-  createContext,
-  useContext,
-  useState,
-  type ReactNode,
-  useEffect,
-} from "react";
-import { useUser } from "@clerk/clerk-react";
-
-export interface IFinancialRecord {
-  _id: string;
-  userId: string;
-  date: string; // yyyy-mm-dd
-  desc: string;
-  amt: number;
-  category?: string;
-  payment?: string;
-}
-
-type RecordsContextValue = {
-  records: IFinancialRecord[];
-  loading: boolean;
-  addRecord: (r: Omit<IFinancialRecord, "_id" | "userId">) => Promise<void>;
-  updateRecord: (id: string, payload: Partial<IFinancialRecord>) => Promise<void>;
-  deleteRecord: (id: string) => Promise<void>;
-};
-
-const RecordsContext = createContext<RecordsContextValue | undefined>(undefined);
-
-const STORAGE_KEY = "expense-tracker-records-v1";
-
-function generateId() {
-  return Math.random().toString(36).slice(2, 9);
-}
+import React, { createContext, useContext, useEffect, useState } from "react";
 
 /**
- * Simple client-side context that tries to POST/PUT/DELETE to
- * server endpoints if available, but falls back to localStorage.
+ * FinancialRecordContext
+ * - Uses VITE_API_URL at build time (Vite)
+ * - If VITE_API_URL is not provided, falls back to localhost for local dev only
  *
- * (Adjust endpoint URLs if your server API paths differ).
+ * Make sure to set VITE_API_URL in Vercel environment variables (Production/Preview/Development).
  */
-export const FinancialRecordProvider = ({ children }: { children: ReactNode }) => {
-  const { isLoaded, isSignedIn, user } = useUser();
-  const [records, setRecords] = useState<IFinancialRecord[]>([]);
-  const [loading, setLoading] = useState(true);
 
-  // Helper: load from server or localStorage
-  const loadRecords = async () => {
-    setLoading(true);
+// --- Types (adjust to your project's real model) ---
+export type FinancialRecord = {
+  _id?: string;
+  title: string;
+  amount: number;
+  category?: string;
+  date?: string;
+};
+
+// --- Configure API base (Vite injects import.meta.env at build time) ---
+const VITE_API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
+
+function apiUrlFor(path: string) {
+  if (VITE_API_BASE) {
+    const base = VITE_API_BASE.replace(/\/$/, "");
+    return `${base}/${path.replace(/^\//, "")}`;
+  }
+  // local dev fallback (only used in development)
+  return `http://localhost:3001/${path.replace(/^\//, "")}`;
+}
+
+const FINANCIAL_RECORDS_API = apiUrlFor("financial-records");
+
+// --- Context value shape ---
+type ContextValue = {
+  records: FinancialRecord[];
+  loading: boolean;
+  error?: string | null;
+  fetchRecords: () => Promise<void>;
+  addRecord: (r: Omit<FinancialRecord, "_id">) => Promise<FinancialRecord | null>;
+  deleteRecord: (id: string) => Promise<boolean>;
+};
+
+const FinancialRecordContext = createContext<ContextValue | undefined>(undefined);
+
+// --- Provider implementation ---
+export const FinancialRecordProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [records, setRecords] = useState<FinancialRecord[]>([]);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Fetch records from API
+  const fetchRecords = async () => {
     try {
-      // if backend exists, try to fetch (adjust path if needed)
-      const res = await fetch("/api/financial-records");
-      if (res.ok) {
-        const data = await res.json();
-        setRecords(Array.isArray(data) ? data : []);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(data || []));
-        setLoading(false);
-        return;
+      setLoading(true);
+      setError(null);
+      const res = await fetch(FINANCIAL_RECORDS_API, {
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`Failed to fetch records: ${res.status} ${text}`);
       }
-    } catch (e) {
-      // ignore and fall back to localStorage below
-      // console.warn("fetch records failed, falling back to localStorage", e);
+      const data = await res.json();
+      setRecords(Array.isArray(data) ? data : []);
+    } catch (err: any) {
+      setError(err?.message ?? "Unknown error");
+    } finally {
+      setLoading(false);
     }
+  };
 
-    // fallback
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      try {
-        const parsed = JSON.parse(raw) as IFinancialRecord[];
-        setRecords(parsed);
-      } catch {
-        setRecords([]);
+  const addRecord = async (r: Omit<FinancialRecord, "_id">) => {
+    try {
+      setLoading(true);
+      const res = await fetch(FINANCIAL_RECORDS_API, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(r),
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`Failed to add record: ${res.status} ${text}`);
       }
-    } else {
-      setRecords([]);
+      const created = await res.json();
+      setRecords((prev) => [created, ...prev]);
+      return created;
+    } catch (err: any) {
+      setError(err?.message ?? "Unknown error");
+      return null;
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
+  };
+
+  const deleteRecord = async (id: string) => {
+    try {
+      setLoading(true);
+      const res = await fetch(`${FINANCIAL_RECORDS_API}/${id}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`Failed to delete: ${res.status} ${text}`);
+      }
+      setRecords((prev) => prev.filter((r) => r._id !== id));
+      return true;
+    } catch (err: any) {
+      setError(err?.message ?? "Unknown error");
+      return false;
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
-    // Only load when Clerk tells us whether user is signed in (prevents extra calls)
-    if (isLoaded) {
-      loadRecords();
-    }
+    // auto-load once on mount
+    fetchRecords();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLoaded, isSignedIn, user?.id]);
+  }, []);
 
-  // Add record (try server, fallback to local)
-  const addRecord = async (payload: Omit<IFinancialRecord, "_id" | "userId">) => {
-    const newRecord: IFinancialRecord = {
-      _id: generateId(),
-      userId: user?.id ?? "anon",
-      ...payload,
-    };
-    // optimistic update
-    setRecords((r) => {
-      const next = [newRecord, ...r];
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      return next;
-    });
-
-    try {
-      const res = await fetch("/api/financial-records", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(newRecord),
-      });
-      if (!res.ok) {
-        // server didn't save — we keep local copy, but don't crash
-        // console.warn("server add record failed", res.status);
-      } else {
-        const saved = await res.json();
-        // if server returns authoritative id, reconcile it:
-        setRecords((r) => {
-          const next = r.map((x) => (x._id === newRecord._id ? saved : x));
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-          return next;
-        });
-      }
-    } catch {
-      // offline — already stored in localStorage
-    }
+  const value: ContextValue = {
+    records,
+    loading,
+    error,
+    fetchRecords,
+    addRecord,
+    deleteRecord,
   };
 
-  // Update record
-  const updateRecord = async (id: string, payload: Partial<IFinancialRecord>) => {
-    setRecords((r) => {
-      const next = r.map((x) => (x._id === id ? { ...x, ...payload } : x));
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      return next;
-    });
-
-    try {
-      await fetch(`/api/financial-records/${encodeURIComponent(id)}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-    } catch {
-      // ignore
-    }
-  };
-
-  // Delete record
-  const deleteRecord = async (id: string) => {
-    setRecords((r) => {
-      const next = r.filter((x) => x._id !== id);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      return next;
-    });
-
-    try {
-      await fetch(`/api/financial-records/${encodeURIComponent(id)}`, {
-        method: "DELETE",
-      });
-    } catch {
-      // ignore
-    }
-  };
-
-  return (
-    <RecordsContext.Provider value={{ records, loading, addRecord, updateRecord, deleteRecord }}>
-      {children}
-    </RecordsContext.Provider>
-  );
+  return <FinancialRecordContext.Provider value={value}>{children}</FinancialRecordContext.Provider>;
 };
 
+// --- Hook for consumers ---
 export const useFinancialRecords = () => {
-  const ctx = useContext(RecordsContext);
+  const ctx = useContext(FinancialRecordContext);
   if (!ctx) throw new Error("useFinancialRecords must be used inside FinancialRecordProvider");
   return ctx;
 };
